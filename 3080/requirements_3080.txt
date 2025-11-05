@@ -1,0 +1,15 @@
+# Hugging Face 생태계 및 QLoRA 핵심 라이브러리
+transformers>=4.38.0
+datasets
+peft
+accelerate
+bitsandbytes
+
+# 모델 토크나이저 및 기타 유틸리티
+sentencepiece
+scipy
+matplotlib
+numpy
+
+#ipynb 실행
+ipykernel
