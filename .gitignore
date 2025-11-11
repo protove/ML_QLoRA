@@ -1,28 +1,21 @@
-# Python cache
+# Python venv & cache
+.venv/
+venv/
+env/
 __pycache__/
 *.pyc
 
-# Virtual environments
-env/
-venv/
-.venv/
-
-# macOS system files
-.DS_Store
-
-# VSCode settings
-.vscode/
-
-# Model checkpoints and large files
+# Model outputs & checkpoints
+checkpoints/
+*/checkpoint-*/
 *.safetensors
-*.bin
 *.pt
-*.ckpt
+*.bin
 
-# Logs
-logs/
-*.log
-events.out.*
+# TensorBoard logs
+runs/
+events.out.tfevents.*
 
-# Hugging Face cache
-~/.cache/huggingface/
+# HuggingFace cache
+.cache/
+huggingface/
