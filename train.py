@@ -83,7 +83,7 @@ training_args = TrainingArguments(
     output_dir="./tinyllama_lora_output_v2",
     per_device_train_batch_size=1,
     gradient_accumulation_steps=8,
-    num_train_epochs=1,
+    num_train_epochs=3,
     learning_rate=2e-4,
 
     fp16=False,     # ❗ MPS는 fp16 대신 False 또는 bf16 사용
