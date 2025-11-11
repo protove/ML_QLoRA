@@ -2,3 +2,9 @@
 /3080/qlora-mistral-3080/*
 /3080/qlora-mistral-3080-final
 /3080/qlora-mistral-3080-final/*
+/3080/training_background.log
+
+/3080/TRAINING_GUIDE.md
+/3080/FP16_LORA_GUIDE.md
+/3080/RTX3080_OPTIMIZATION_GUIDE.md
+/3080/fp16-lora-tinyllama-3080-final

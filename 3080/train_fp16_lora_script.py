@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-QLoRA Fine-tuning Script for RTX 3080
-Mistral-7B 모델을 RTX 3080에서 효율적으로 학습하기
+FP16 LoRA Fine-tuning Script for RTX 3080
+TinyLlama-1.1B 모델을 RTX 3080에서 FP16 LoRA로 학습하기
 
 이 스크립트는 백그라운드에서 실행되며 모든 로그를 파일에 기록합니다.
 """
@@ -24,18 +24,17 @@ from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
     TrainerCallback,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model
 
 
 class ExperimentManager:
     """실험 폴더 및 로깅 관리"""
     
-    def __init__(self, base_dir="./qlora-mistral-3080-final"):
+    def __init__(self, base_dir="./fp16-lora-tinyllama-3080-final"):
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
         self.experiment_dir = self._create_experiment_dir()
@@ -61,8 +60,11 @@ class ExperimentManager:
         log_file = self.experiment_dir / "training.log"
         
         # 로거 생성
-        logger = logging.getLogger("QLoRA_Training")
+        logger = logging.getLogger("FP16_LoRA_Training")
         logger.setLevel(logging.INFO)
+        
+        # 기존 핸들러 제거 (중복 방지)
+        logger.handlers.clear()
         
         # 파일 핸들러
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -85,7 +87,7 @@ class ExperimentManager:
         
         return logger
     
-    def save_config(self, bnb_config, lora_config, training_args):
+    def save_config(self, lora_config, training_args, model_config):
         """설정 파일들을 보기 좋게 저장"""
         config_file = self.experiment_dir / "config.json"
         
@@ -95,13 +97,13 @@ class ExperimentManager:
                 "experiment_dir": str(self.experiment_dir),
                 "pytorch_version": torch.__version__,
                 "cuda_version": torch.version.cuda if torch.cuda.is_available() else "N/A",
-                "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
+                "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A",
+                "training_method": "FP16 LoRA (No Quantization)"
             },
-            "BitsAndBytesConfig": {
-                "load_in_4bit": bnb_config.load_in_4bit,
-                "bnb_4bit_quant_type": bnb_config.bnb_4bit_quant_type,
-                "bnb_4bit_compute_dtype": str(bnb_config.bnb_4bit_compute_dtype),
-                "bnb_4bit_use_double_quant": bnb_config.bnb_4bit_use_double_quant,
+            "ModelConfig": {
+                "model_id": model_config["model_id"],
+                "torch_dtype": str(model_config["torch_dtype"]),
+                "device_map": model_config["device_map"],
             },
             "LoraConfig": {
                 "r": lora_config.r,
@@ -134,7 +136,7 @@ class ExperimentManager:
         config_txt_file = self.experiment_dir / "config.txt"
         with open(config_txt_file, 'w', encoding='utf-8') as f:
             f.write("="*80 + "\n")
-            f.write("QLoRA Training Configuration\n")
+            f.write("FP16 LoRA Training Configuration\n")
             f.write("="*80 + "\n\n")
             
             for section, values in config_data.items():
@@ -221,7 +223,7 @@ class LoggingCallback(TrainerCallback):
         plt.plot(self.steps, self.losses, 'b-', linewidth=2, label='Training Loss')
         plt.xlabel('Steps', fontsize=12)
         plt.ylabel('Loss', fontsize=12)
-        plt.title('Training Loss Curve', fontsize=14, fontweight='bold')
+        plt.title('Training Loss Curve (FP16 LoRA)', fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
@@ -272,8 +274,8 @@ def main():
     logger = exp_manager.logger
     
     logger.info("="*80)
-    logger.info("QLoRA Fine-tuning for RTX 3080")
-    logger.info("Mistral-7B 모델 학습 스크립트")
+    logger.info("FP16 LoRA Fine-tuning for RTX 3080")
+    logger.info("TinyLlama-1.1B 모델 학습 스크립트")
     logger.info("="*80)
     logger.info(f"실험 폴더: {exp_manager.experiment_dir}")
     logger.info(f"PyTorch 버전: {torch.__version__}")
@@ -301,75 +303,98 @@ def main():
     logger.info(f"  모델: {model_id}")
     logger.info(f"  Vocabulary 크기: {len(tokenizer)}")
     
-    # 2. QLoRA 설정
+    # 2. FP16 모델 설정
     logger.info("\n" + "-"*80)
-    logger.info("2. QLoRA 설정 중...")
+    logger.info("2. FP16 모델 설정 중...")
     logger.info("-"*80)
     
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
+    logger.info("  - 양자화: 없음 (Full Precision FP16)")
+    logger.info("  - 계산 타입: float16")
     
-    logger.info("✓ QLoRA 설정 완료")
-    logger.info("  - 4비트 양자화: 활성화")
-    logger.info("  - 양자화 타입: NF4")
-    logger.info("  - 계산 타입: bfloat16")
-    logger.info("  - 이중 양자화: 활성화")
-    
-    # 3. 모델 로드
+    # 3. 모델 로드 (FP16)
     logger.info("\n" + "-"*80)
-    logger.info("3. 모델 로드 중... (시간이 걸릴 수 있습니다)")
+    logger.info("3. 모델 로드 중... (FP16으로 로드)")
     logger.info("-"*80)
     
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        quantization_config=bnb_config,
+        torch_dtype=torch.float16,
         device_map="auto"
     )
+    
+    # 모델 설정 저장용
+    model_config = {
+        "model_id": model_id,
+        "torch_dtype": torch.float16,
+        "device_map": "auto"
+    }
     
     logger.info("✓ 모델 로드 완료")
     logger.info(f"  모델 타입: {type(model).__name__}")
     logger.info(f"  디바이스: {next(model.parameters()).device}")
+    logger.info(f"  데이터 타입: {next(model.parameters()).dtype}")
     
-    # 4. LoRA 설정
+    # 4. LoRA 설정 (RTX 3080 최적화)
     logger.info("\n" + "-"*80)
-    logger.info("4. LoRA 설정 중...")
+    logger.info("4. LoRA 설정 중... (RTX 3080 최적화)")
     logger.info("-"*80)
     
     peft_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
+        r=8,                        # VRAM 절약을 위한 최소 랭크 (r=16은 OOM 위험)
+        lora_alpha=16,              # r * 2 (표준 설정)
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
         ],
-        lora_dropout=0.05,
+        lora_dropout=0.05,          # 과적합 방지
         bias="none",
         task_type="CAUSAL_LM",
     )
     
-    logger.info("✓ LoRA 설정 완료")
-    logger.info(f"  - 랭크(r): {peft_config.r}")
-    logger.info(f"  - 알파: {peft_config.lora_alpha}")
+    logger.info("✓ LoRA 설정 완료 (RTX 3080 최적화)")
+    logger.info(f"  - 랭크(r): {peft_config.r} (VRAM 절약 우선)")
+    logger.info(f"  - 알파: {peft_config.lora_alpha} (r * 2)")
     logger.info(f"  - 드롭아웃: {peft_config.lora_dropout}")
     logger.info(f"  - 대상 모듈 수: {len(peft_config.target_modules)}")
     
-    # 5. PEFT 모델 준비
+    # 5. FP16 학습을 위한 모델 준비 (QLoRA 방식 적용)
     logger.info("\n" + "-"*80)
-    logger.info("5. PEFT 모델 준비 중...")
+    logger.info("5. FP16 학습을 위한 모델 준비 중... (QLoRA 방식)")
     logger.info("-"*80)
     
-    model = prepare_model_for_kbit_training(model)
+    # QLoRA의 prepare_model_for_kbit_training과 동일한 로직 적용
+    # 5-1. 모든 파라미터 freeze
+    for param in model.parameters():
+        param.requires_grad = False
+    logger.info("  - 베이스 모델 파라미터 freeze 완료")
+    
+    # 5-2. Input에 대한 gradient 활성화
+    if hasattr(model, 'enable_input_require_grads'):
+        model.enable_input_require_grads()
+        logger.info("  - Input gradient 활성화 완료 (enable_input_require_grads)")
+    else:
+        def make_inputs_require_grad(module, input, output):
+            output.requires_grad_(True)
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+        logger.info("  - Input gradient 활성화 완료 (forward hook)")
+    
+    # 5-3. LayerNorm을 FP32로 변환 (수치 안정성)
+    norm_count = 0
+    for name, module in model.named_modules():
+        if 'norm' in name.lower():
+            module.to(torch.float32)
+            norm_count += 1
+    logger.info(f"  - LayerNorm을 FP32로 변환 완료 ({norm_count}개 레이어)")
+    
+    # 5-4. LoRA 어댑터 적용
     model = get_peft_model(model, peft_config)
+    logger.info("  - LoRA 어댑터 적용 완료")
     
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
     trainable_percent = 100 * trainable_params / all_params
     
-    logger.info("✓ PEFT 모델 준비 완료")
+    logger.info("✓ PEFT 모델 준비 완료 (QLoRA 방식)")
     logger.info(f"  학습 가능한 파라미터: {trainable_params:,}")
     logger.info(f"  전체 파라미터: {all_params:,}")
     logger.info(f"  학습 가능 비율: {trainable_percent:.4f}%")
@@ -389,45 +414,47 @@ def main():
     logger.info(f"  - 샘플 수: {len(data)}")
     logger.info(f"  - 컬럼: {data.column_names}")
     
-    # 토크나이징
-    logger.info("토크나이징 중...")
+    # 토크나이징 (RTX 3080 최적화: max_length=512)
+    logger.info("토크나이징 중... (max_length=512로 VRAM 최적화)")
     tokenized_data = data.map(
         lambda p: tokenizer(format_instruction(p), truncation=True, max_length=512, padding="max_length"),
         remove_columns=data.column_names
     )
     
     logger.info("✓ 토크나이징 완료")
-    logger.info(f"  - 최대 길이: 512 토큰")
+    logger.info(f"  - 최대 길이: 512 토큰 (VRAM 절약을 위한 제한)")
     
-    # 7. TrainingArguments 설정
+    # 7. TrainingArguments 설정 (RTX 3080 최적화)
     logger.info("\n" + "-"*80)
-    logger.info("7. Training Arguments 설정 중...")
+    logger.info("7. Training Arguments 설정 중... (RTX 3080 최적화)")
     logger.info("-"*80)
     
     training_args = TrainingArguments(
         output_dir=str(exp_manager.experiment_dir / "checkpoints"),
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=16,
-        optim="paged_adamw_32bit",
-        learning_rate=2e-4,
+        per_device_train_batch_size=1,      # 필수: VRAM 최소화
+        gradient_accumulation_steps=16,     # 실질 배치 크기 16 (OOM 시 32로 증가)
+        optim="paged_adamw_32bit",          # 필수: VRAM 부족 시 CPU RAM 스왑
+        learning_rate=1e-4,                 # FP16 안정성을 위해 QLoRA(2e-4)보다 낮춤
         lr_scheduler_type="cosine",
-        num_train_epochs=10,
-        fp16=True,
+        num_train_epochs=5,
+        fp16=True,                          # 필수: VRAM 절반 절약 + RTX 3080 텐서 코어 활용
         logging_steps=10,
         save_strategy="epoch",
-        gradient_checkpointing=True,
+        gradient_checkpointing=True,        # 필수: 활성화 메모리 절약 (속도 20-30% 감소)
     )
     
-    logger.info("✓ Training Arguments 설정 완료")
-    logger.info(f"  - 배치 크기: {training_args.per_device_train_batch_size}")
+    logger.info("✓ Training Arguments 설정 완료 (RTX 3080 최적화)")
+    logger.info(f"  - 배치 크기: {training_args.per_device_train_batch_size} (VRAM 최소화)")
     logger.info(f"  - Gradient Accumulation: {training_args.gradient_accumulation_steps}")
     logger.info(f"  - 실질 배치 크기: {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")
-    logger.info(f"  - 학습률: {training_args.learning_rate}")
+    logger.info(f"  - 학습률: {training_args.learning_rate} (FP16 안정화)")
     logger.info(f"  - 스케줄러: {training_args.lr_scheduler_type}")
     logger.info(f"  - 에포크: {training_args.num_train_epochs}")
+    logger.info(f"  - FP16: {training_args.fp16} (텐서 코어 활용)")
+    logger.info(f"  - Gradient Checkpointing: {training_args.gradient_checkpointing} (VRAM 절약)")
     
     # 설정 저장
-    exp_manager.save_config(bnb_config, peft_config, training_args)
+    exp_manager.save_config(peft_config, training_args, model_config)
     
     # 8. Trainer 초기화
     logger.info("\n" + "-"*80)
